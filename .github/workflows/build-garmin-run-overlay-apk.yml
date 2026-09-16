@@ -22,17 +22,17 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.9'
+          gradle-version: '8.11.1'
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
       - name: Copy APK with friendly name
-        run: cp app/build/outputs/apk/debug/app-debug.apk Garmin-Run-Overlay.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Garmin-Run-Overlay-v1.2.0.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Garmin-Run-Overlay-APK
-          path: Garmin-Run-Overlay.apk
+          name: Garmin-Run-Overlay-v1.2.0-APK
+          path: Garmin-Run-Overlay-v1.2.0.apk
           if-no-files-found: error
