@@ -7,6 +7,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -16,8 +17,11 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
 public class MainActivity extends Activity {
-    private static final String APP_URL = "https://garmin-run-overlay-587q24.v2.appdeploy.ai/";
+    private static final String APP_URL = "https://garmin-run-overlay-587q24.v2.appdeploy.ai/?native=1";
+    private static final String DEEP_LINK_SCHEME = "garminrunoverlay";
+    private static final String DEEP_LINK_HOST = "oauth-complete";
     private static final int FILE_CHOOSER_REQUEST = 2001;
+
     private WebView webView;
     private ValueCallback<Uri[]> fileCallback;
 
@@ -25,22 +29,48 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(createConfiguredWebView(), true);
+        webView = new WebView(this);
+        configureWebView(webView, null, true);
+        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
         setContentView(webView);
-        if (savedInstanceState == null) {
-            webView.loadUrl(APP_URL);
-        } else {
+
+        if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState);
+        } else if (!handleDeepLink(getIntent())) {
+            webView.loadUrl(APP_URL);
         }
     }
 
-    private WebView createConfiguredWebView() {
-        webView = new WebView(this);
-        configureWebView(webView, null);
-        return webView;
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (!handleDeepLink(intent) && webView != null) {
+            webView.loadUrl(APP_URL);
+        }
     }
 
-    private void configureWebView(WebView view, Dialog popupDialog) {
+    private boolean handleDeepLink(Intent intent) {
+        if (intent == null || intent.getData() == null) return false;
+        Uri uri = intent.getData();
+        if (!DEEP_LINK_SCHEME.equals(uri.getScheme()) || !DEEP_LINK_HOST.equals(uri.getHost())) {
+            return false;
+        }
+
+        String status = uri.getQueryParameter("status");
+        String error = uri.getQueryParameter("error");
+        String target;
+        if ("connected".equals(status)) {
+            target = APP_URL + "#fitness-ai=connected";
+        } else {
+            String message = error == null || error.isEmpty() ? "OAuth 인증이 완료되지 않았습니다." : error;
+            target = APP_URL + "#fitness-ai-error=" + Uri.encode(message);
+        }
+        if (webView != null) webView.loadUrl(target);
+        return true;
+    }
+
+    private void configureWebView(WebView view, Dialog popupDialog, boolean trustedMainView) {
         WebSettings settings = view.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -52,6 +82,10 @@ public class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setUserAgentString(settings.getUserAgentString().replace("; wv", ""));
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, true);
+
+        if (trustedMainView) {
+            view.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
+        }
 
         view.setWebViewClient(new WebViewClient() {
             @Override
@@ -71,7 +105,7 @@ public class MainActivity extends Activity {
 
         view.setWebChromeClient(new WebChromeClient() {
             @Override
-            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
+            public boolean onShowFileChooser(WebView currentWebView, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (fileCallback != null) fileCallback.onReceiveValue(null);
                 fileCallback = callback;
                 Intent intent = params.createIntent();
@@ -88,7 +122,7 @@ public class MainActivity extends Activity {
             public boolean onCreateWindow(WebView source, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
                 final Dialog dialog = new Dialog(MainActivity.this, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen);
                 final WebView child = new WebView(MainActivity.this);
-                configureWebView(child, dialog);
+                configureWebView(child, dialog, false);
                 dialog.setContentView(child, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
                 dialog.setOnDismissListener(d -> child.destroy());
                 WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
@@ -103,6 +137,28 @@ public class MainActivity extends Activity {
                 if (popupDialog != null && popupDialog.isShowing()) popupDialog.dismiss();
             }
         });
+    }
+
+    private final class AndroidBridge {
+        @JavascriptInterface
+        public void openExternal(String url) {
+            if (url == null) return;
+            Uri uri;
+            try {
+                uri = Uri.parse(url);
+            } catch (Exception ignored) {
+                return;
+            }
+            String scheme = uri.getScheme();
+            if (!"https".equals(scheme) && !"http".equals(scheme)) return;
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                    startActivity(intent);
+                } catch (ActivityNotFoundException ignored) {
+                }
+            });
+        }
     }
 
     @Override
